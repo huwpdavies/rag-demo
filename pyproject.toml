@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rag-demo"
+version = "0.1.0"
+description = "A step-by-step Retrieval-Augmented Generation demo using one PDF and the Anthropic API."
+readme = "README.md"
+requires-python = ">=3.10"
+# Dependencies are added phase by phase, as each stage of the pipeline is built.
+dependencies = [
+    "typer>=0.12",
+    "rich>=13",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+rag-demo = "rag_demo.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,17 @@
+# Secrets
+.env
+
+# Generated index files
+index/
+
+# Source PDFs (bring your own)
+data/*.pdf
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
