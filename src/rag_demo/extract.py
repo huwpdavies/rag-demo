@@ -17,9 +17,11 @@ Pages with no extractable text are reported, because they usually mean a
 scanned or image-only page (OCR is out of scope for this demo).
 """
 
+import hashlib
+import json
 import re
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from pypdf import PdfReader
@@ -125,10 +127,61 @@ def page_count(pdf_path: Path) -> int:
 def extract_pages(
     pdf_path: Path, on_page: Callable[[Page], None] | None = None
 ) -> list[Page]:
-    """Extract every page of the PDF. `on_page` is called after each page (for progress)."""
+    """Extract every page of the PDF. `on_page` is called after each page (for progress).
+
+    The result is also written to the cache, so later stages can skip extraction.
+    """
     pages = []
     for page in iter_pages(pdf_path):
         pages.append(page)
         if on_page:
             on_page(page)
+    _write_cache(pdf_path, pages)
     return pages
+
+
+# --- Cache -----------------------------------------------------------------
+#
+# Extracting a long PDF takes a while, and every later stage starts from the
+# extracted pages. The cache stores them as JSON, keyed by the PDF's SHA-256
+# hash, so a changed PDF is never served stale text.
+
+# Bump this when clean_page_text changes, so old cached text is not reused.
+CLEANING_VERSION = 1
+
+
+def pdf_sha256(pdf_path: Path) -> str:
+    digest = hashlib.sha256()
+    with pdf_path.open("rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _cache_path(sha256: str) -> Path:
+    return config.INDEX_DIR / "pages" / f"{sha256[:16]}.json"
+
+
+def _write_cache(pdf_path: Path, pages: list[Page]) -> None:
+    sha256 = pdf_sha256(pdf_path)
+    path = _cache_path(sha256)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "pdf": pdf_path.name,
+        "sha256": sha256,
+        "cleaning_version": CLEANING_VERSION,
+        "pages": [asdict(p) for p in pages],
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def load_cached_pages(pdf_path: Path) -> list[Page] | None:
+    """Return the cached pages for this exact PDF, or None if there is no valid cache."""
+    sha256 = pdf_sha256(pdf_path)
+    path = _cache_path(sha256)
+    if not path.is_file():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("sha256") != sha256 or payload.get("cleaning_version") != CLEANING_VERSION:
+        return None
+    return [Page(**p) for p in payload["pages"]]

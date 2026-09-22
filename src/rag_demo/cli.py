@@ -14,8 +14,9 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress
 from rich.table import Table
+from rich.text import Text
 
-from rag_demo import config, extract as extraction
+from rag_demo import chunk as chunking, config, extract as extraction
 
 # PDFs are full of curly quotes and dashes; make sure redirected output on
 # Windows doesn't choke on them.
@@ -139,17 +140,118 @@ def extract(
         target = next((p for p in pages if p.text), None)
     if target is None:
         return
-    preview = target.text[:preview_chars]
+    preview = Text(target.text[:preview_chars])  # Text, not markup: book text may contain [brackets]
     if len(target.text) > preview_chars:
-        preview += " …"
+        preview.append(" …")
     console.print()
     console.print(
         Panel(
-            preview or "[yellow](no text on this page)[/yellow]",
+            preview if target.text else "[yellow](no text on this page)[/yellow]",
             title=f"Preview: page {target.page_number}",
             subtitle=f"{len(target.text):,} characters",
         )
     )
+
+
+def _load_pages(pdf_path: Path) -> list[extraction.Page]:
+    """Pages from the extraction cache if it is valid, otherwise extract now."""
+    pages = extraction.load_cached_pages(pdf_path)
+    if pages is not None:
+        console.print(f"[dim]Using cached extraction of {pdf_path.name}[/dim]")
+        return pages
+    console.print(f"Extracting [bold]{pdf_path.name}[/bold] (cached for next time)")
+    return _extract_with_progress(pdf_path, extraction.page_count(pdf_path))
+
+
+def _histogram(values: list[int], bins: int = 10, width: int = 40) -> Table:
+    """A text histogram of chunk lengths, with bins spanning the observed range."""
+    low, high = min(values), max(values)
+    step = max(1, -(-(high - low + 1) // bins))  # ceiling division
+    counts = [0] * bins
+    for v in values:
+        counts[min((v - low) // step, bins - 1)] += 1
+    table = Table.grid(padding=(0, 1))
+    for i, n in enumerate(counts):
+        bin_low = low + i * step
+        if bin_low > high:
+            break
+        bar = "█" * max(1, round(width * n / max(counts))) if n else ""
+        table.add_row(f"{bin_low:>5,}–{min(bin_low + step - 1, high):<5,}", f"[cyan]{bar}[/cyan]", f"{n:,}")
+    return table
+
+
+PREV_OVERLAP_STYLE = "black on yellow"
+NEXT_OVERLAP_STYLE = "black on bright_cyan"
+
+
+@app.command()
+def chunk(
+    strategy: str = typer.Option(config.CHUNK_STRATEGY, "--strategy", help="fixed or paragraph."),
+    chunk_size: int = typer.Option(config.CHUNK_SIZE, "--chunk-size", help="Maximum characters per chunk."),
+    overlap: int = typer.Option(
+        config.CHUNK_OVERLAP, "--overlap", help="Characters shared by neighbouring chunks (fixed only)."
+    ),
+    sample_from: int = typer.Option(None, "--sample-from", help="ID of the first sample chunk (default: middle)."),
+    pdf: Path = PdfOption,
+) -> None:
+    """Stage 2: cut the text into chunks and show how they overlap."""
+    pdf_path = _resolve_pdf(pdf)
+    if strategy == "paragraph":
+        overlap = 0
+    try:
+        pages = _load_pages(pdf_path)
+        chunks = chunking.chunk_pages(pages, strategy, chunk_size, overlap)
+    except ValueError as err:
+        console.print(f"[bold red]Error:[/bold red] {err}")
+        raise typer.Exit(code=1)
+    if not chunks:
+        console.print("[yellow]No chunks: the PDF has no extractable text.[/yellow]")
+        return
+
+    lengths = [c.length for c in chunks]
+    summary = Table.grid(padding=(0, 2))
+    summary.add_row("Strategy", strategy)
+    summary.add_row("Chunk size", f"{chunk_size:,} characters")
+    summary.add_row("Overlap", f"{overlap:,} characters" if strategy == "fixed" else "none (paragraph strategy)")
+    summary.add_row("Chunks", f"{len(chunks):,}")
+    summary.add_row(
+        "Chunk length",
+        f"min {min(lengths):,} · median {int(statistics.median(lengths)):,} · max {max(lengths):,}",
+    )
+    console.print(summary)
+
+    console.print()
+    console.print("[bold]Chunk length histogram[/bold] (characters → number of chunks)")
+    console.print(_histogram(lengths))
+
+    # Three consecutive sample chunks, with shared (overlapping) text highlighted.
+    first = len(chunks) // 2 if sample_from is None else sample_from
+    first = max(0, min(first, len(chunks) - 3))
+    console.print()
+    if strategy == "fixed":
+        legend = Text("Sample chunks. ")
+        legend.append("Shared with previous chunk", style=PREV_OVERLAP_STYLE)
+        legend.append("  ")
+        legend.append("Shared with next chunk", style=NEXT_OVERLAP_STYLE)
+        console.print(legend)
+    else:
+        console.print("Sample chunks. Paragraph chunks do not overlap; blank lines mark merged paragraphs.")
+
+    for i in range(first, min(first + 3, len(chunks))):
+        c = chunks[i]
+        body = Text(c.text)
+        if i > 0 and chunks[i - 1].end_char > c.start_char:
+            body.stylize(PREV_OVERLAP_STYLE, 0, chunks[i - 1].end_char - c.start_char)
+        if i + 1 < len(chunks) and chunks[i + 1].start_char < c.end_char:
+            body.stylize(NEXT_OVERLAP_STYLE, chunks[i + 1].start_char - c.start_char, c.length)
+        pages_label = "page " + str(c.pages[0]) if len(c.pages) == 1 else f"pages {c.pages[0]}–{c.pages[-1]}"
+        console.print(
+            Panel(
+                body,
+                title=f"Chunk {c.id} · {pages_label}",
+                subtitle=f"chars {c.start_char:,}–{c.end_char:,} · {c.length} long",
+            )
+        )
 
 
 @app.callback()
