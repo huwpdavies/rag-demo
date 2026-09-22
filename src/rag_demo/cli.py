@@ -6,6 +6,7 @@ can be demonstrated step by step. Commands are added phase by phase.
 
 import statistics
 import sys
+import time
 from pathlib import Path
 
 import typer
@@ -13,6 +14,7 @@ from rich.columns import Columns
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress
+from rich.progress import BarColumn, MofNCompleteColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 from rich.text import Text
 
@@ -184,20 +186,15 @@ PREV_OVERLAP_STYLE = "black on yellow"
 NEXT_OVERLAP_STYLE = "black on bright_cyan"
 
 
-@app.command()
-def chunk(
-    strategy: str = typer.Option(config.CHUNK_STRATEGY, "--strategy", help="fixed or paragraph."),
-    chunk_size: int = typer.Option(config.CHUNK_SIZE, "--chunk-size", help="Maximum characters per chunk."),
-    overlap: int = typer.Option(
-        config.CHUNK_OVERLAP, "--overlap", help="Characters shared by neighbouring chunks (fixed only)."
-    ),
-    sample_from: int = typer.Option(None, "--sample-from", help="ID of the first sample chunk (default: middle)."),
-    pdf: Path = PdfOption,
-) -> None:
-    """Stage 2: cut the text into chunks and show how they overlap."""
-    pdf_path = _resolve_pdf(pdf)
-    if strategy == "paragraph":
-        overlap = 0
+StrategyOption = typer.Option(config.CHUNK_STRATEGY, "--strategy", help="fixed or paragraph.")
+ChunkSizeOption = typer.Option(config.CHUNK_SIZE, "--chunk-size", help="Maximum characters per chunk.")
+OverlapOption = typer.Option(
+    config.CHUNK_OVERLAP, "--overlap", help="Characters shared by neighbouring chunks (fixed only)."
+)
+
+
+def _load_chunks(pdf_path: Path, strategy: str, chunk_size: int, overlap: int) -> list[chunking.Chunk]:
+    """Stages 1-2: pages (cached if possible) -> chunks. Exits on bad settings or no text."""
     try:
         pages = _load_pages(pdf_path)
         chunks = chunking.chunk_pages(pages, strategy, chunk_size, overlap)
@@ -206,7 +203,23 @@ def chunk(
         raise typer.Exit(code=1)
     if not chunks:
         console.print("[yellow]No chunks: the PDF has no extractable text.[/yellow]")
-        return
+        raise typer.Exit(code=1)
+    return chunks
+
+
+@app.command()
+def chunk(
+    strategy: str = StrategyOption,
+    chunk_size: int = ChunkSizeOption,
+    overlap: int = OverlapOption,
+    sample_from: int = typer.Option(None, "--sample-from", help="ID of the first sample chunk (default: middle)."),
+    pdf: Path = PdfOption,
+) -> None:
+    """Stage 2: cut the text into chunks and show how they overlap."""
+    pdf_path = _resolve_pdf(pdf)
+    if strategy == "paragraph":
+        overlap = 0
+    chunks = _load_chunks(pdf_path, strategy, chunk_size, overlap)
 
     lengths = [c.length for c in chunks]
     summary = Table.grid(padding=(0, 2))
@@ -252,6 +265,80 @@ def chunk(
                 subtitle=f"chars {c.start_char:,}–{c.end_char:,} · {c.length} long",
             )
         )
+
+
+EmbedderOption = typer.Option(config.EMBEDDER, "--embedder", help="local or voyage.")
+
+
+def _get_embedder(kind: str):
+    from rag_demo import embed as embedding  # imports numpy; keep other commands fast
+
+    try:
+        with console.status(f"Loading the {kind} embedding model…"):
+            return embedding.get_embedder(kind)
+    except (ValueError, config.MissingAPIKeyError, embedding.EmbedderUnavailableError, ImportError) as err:
+        console.print(f"[bold red]Error:[/bold red] {err}")
+        raise typer.Exit(code=1)
+
+
+def _embed_with_progress(embedder, chunks: list[chunking.Chunk]):
+    columns = (TextColumn("Embedding chunks"), BarColumn(), MofNCompleteColumn(), TimeElapsedColumn())
+    with Progress(*columns, console=console, transient=True) as progress:
+        task = progress.add_task("embed", total=len(chunks))
+        return embedder.embed_documents([c.text for c in chunks], on_batch=lambda n: progress.advance(task, n))
+
+
+@app.command()
+def embed(
+    strategy: str = StrategyOption,
+    chunk_size: int = ChunkSizeOption,
+    overlap: int = OverlapOption,
+    embedder_kind: str = EmbedderOption,
+    show: int = typer.Option(0, "--show", help="ID of the chunk whose vector is printed."),
+    pdf: Path = PdfOption,
+) -> None:
+    """Stage 3: turn every chunk into a vector, and show what one looks like."""
+    import numpy as np
+
+    pdf_path = _resolve_pdf(pdf)
+    if strategy == "paragraph":
+        overlap = 0
+    chunks = _load_chunks(pdf_path, strategy, chunk_size, overlap)
+    if not 0 <= show < len(chunks):
+        console.print(f"[bold red]Error:[/bold red] --show must be between 0 and {len(chunks) - 1}.")
+        raise typer.Exit(code=1)
+
+    embedder = _get_embedder(embedder_kind)
+    started = time.perf_counter()
+    try:
+        vectors = _embed_with_progress(embedder, chunks)
+    except Exception as err:  # e.g. network or auth errors from a hosted embedder
+        console.print(f"[bold red]Embedding failed:[/bold red] {type(err).__name__}: {err}")
+        raise typer.Exit(code=1)
+    elapsed = time.perf_counter() - started
+
+    rows, dims = vectors.shape
+    summary = Table.grid(padding=(0, 2))
+    summary.add_row("Model", embedder.name)
+    summary.add_row("Chunks", f"{len(chunks):,} ({strategy}, {chunk_size} chars)")
+    summary.add_row("Matrix shape", f"[bold]{rows:,} x {dims}[/bold]  (one row per chunk, one column per dimension)")
+    summary.add_row("Time taken", f"{elapsed:.1f}s ({rows / elapsed:,.0f} chunks/s)")
+    console.print(summary)
+
+    c, v = chunks[show], vectors[show]
+    snippet = c.text[:150] + ("…" if c.length > 150 else "")
+    numbers = ", ".join(f"{x:+.4f}" for x in v[:8])
+    console.print()
+    console.print(
+        Panel(
+            Text.assemble(
+                ("Text: ", "bold"), snippet, "\n\n",
+                ("Vector: ", "bold"), f"[{numbers}, … {dims - 8} more]", "\n\n",
+                ("Length: ", "bold"), f"{np.linalg.norm(v):.4f} (normalised to 1, so a dot product is a cosine similarity)",
+            ),
+            title=f"Chunk {c.id} as an embedding",
+        )
+    )
 
 
 @app.callback()

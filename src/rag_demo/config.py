@@ -30,8 +30,9 @@ load_dotenv(ENV_FILE)
 CHUNK_STRATEGY = "fixed"  # "fixed" or "paragraph"
 CHUNK_SIZE = 800  # characters per chunk
 CHUNK_OVERLAP = 150  # characters shared between neighbouring fixed-size chunks
-EMBEDDER = "local"  # "local" (sentence-transformers) or "voyage"
-LOCAL_EMBED_MODEL = "all-MiniLM-L6-v2"
+EMBEDDER = os.getenv("EMBEDDER", "local")  # "local" (sentence-transformers) or "voyage"
+# A Hugging Face model ID, or a path to a downloaded copy of the model folder.
+LOCAL_EMBED_MODEL = os.getenv("LOCAL_EMBED_MODEL", "all-MiniLM-L6-v2")
 VOYAGE_EMBED_MODEL = "voyage-3.5"
 INDEX_BACKEND = "numpy"  # "numpy" or "chroma"
 TOP_K = 5
