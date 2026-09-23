@@ -92,6 +92,14 @@ class LocalEmbedder(Embedder):
         # copy (for machines that can't reach huggingface.co). Either way the
         # index records the model's name, not where it was loaded from.
         self.name = embedder_name("local", model_name)
+        # Use the copy saved on disk if there is one. Otherwise the library
+        # checks huggingface.co for updates on every load, which is slow, and on
+        # a network that blocks the site, hangs until it times out.
+        try:
+            self.model = SentenceTransformer(model_name, device="cpu", local_files_only=True)
+            return
+        except OSError:
+            pass  # not downloaded yet
         try:
             self.model = SentenceTransformer(model_name, device="cpu")
         except OSError as err:

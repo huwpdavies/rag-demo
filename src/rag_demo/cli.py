@@ -467,6 +467,60 @@ def index_info() -> None:
         )
 
 
+def _open_retriever(embedder_kind: str):
+    """Load the saved index and its embedder, or exit with a clear message."""
+    from rag_demo import embed as embedding, index as indexing
+    from rag_demo.retrieve import Retriever
+
+    try:
+        with console.status("Loading the index and embedding model…"):
+            return Retriever.open(config.INDEX_DIR, embedder_kind)
+    except indexing.IndexNotFoundError as err:
+        console.print(f"[yellow]{err}[/yellow]")
+    except (indexing.IndexMismatchError, embedding.EmbedderUnavailableError, config.MissingAPIKeyError, ValueError) as err:
+        console.print(f"[bold red]Error:[/bold red] {err}")
+    raise typer.Exit(code=1)
+
+
+def _pages_label(pages: list[int]) -> str:
+    return str(pages[0]) if len(pages) == 1 else f"{pages[0]}–{pages[-1]}"
+
+
+@app.command()
+def search(
+    question: str = typer.Argument(..., help="The question to search for."),
+    top_k: int = typer.Option(config.TOP_K, "--top-k", "-k", help="Number of chunks to return."),
+    embedder_kind: str = EmbedderOption,
+    preview_chars: int = typer.Option(150, "--preview-chars", help="Characters of each chunk to show."),
+) -> None:
+    """Stage 5: find the chunks most similar to a question (no Claude involved)."""
+    if top_k < 1:
+        console.print("[bold red]Error:[/bold red] --top-k must be at least 1.")
+        raise typer.Exit(code=1)
+    retriever = _open_retriever(embedder_kind)
+
+    started = time.perf_counter()
+    results = retriever.retrieve(question, top_k)
+    elapsed_ms = (time.perf_counter() - started) * 1000
+
+    table = Table(title=f"Top {len(results)} chunks for: “{question}”", show_header=True, show_lines=True)
+    table.add_column("Rank", justify="right")
+    table.add_column("Score", justify="right")
+    table.add_column("Page(s)", justify="right", no_wrap=True)
+    table.add_column("Chunk", justify="right")
+    table.add_column(f"Text (first {preview_chars} characters)")
+    for rank, r in enumerate(results, start=1):
+        snippet = " ".join(r.chunk.text.split())  # flatten paragraph breaks for the table
+        if len(snippet) > preview_chars:
+            snippet = snippet[:preview_chars] + "…"
+        table.add_row(str(rank), f"{r.score:.3f}", _pages_label(r.chunk.pages), str(r.chunk.id), Text(snippet))
+    console.print(table)
+    console.print(
+        f"[dim]Searched {len(retriever.index):,} chunks with {retriever.manifest.embedding_model} "
+        f"in {elapsed_ms:.0f} ms. Score = cosine similarity (1.0 = same direction, ~0 = unrelated).[/dim]"
+    )
+
+
 @app.callback()
 def main() -> None:
     """A step-by-step Retrieval-Augmented Generation demo over a single PDF."""
