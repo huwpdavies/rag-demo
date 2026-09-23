@@ -13,8 +13,7 @@ import typer
 from rich.columns import Columns
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import Progress
-from rich.progress import BarColumn, MofNCompleteColumn, TextColumn, TimeElapsedColumn
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeElapsedColumn
 from rich.table import Table
 from rich.text import Text
 
@@ -339,6 +338,133 @@ def embed(
             title=f"Chunk {c.id} as an embedding",
         )
     )
+
+
+def _human_size(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:,.0f} {unit}" if unit == "B" else f"{n:,.1f} {unit}"
+        n /= 1024
+
+
+@app.command()
+def ingest(
+    strategy: str = StrategyOption,
+    chunk_size: int = ChunkSizeOption,
+    overlap: int = OverlapOption,
+    embedder_kind: str = EmbedderOption,
+    fresh: bool = typer.Option(False, "--fresh", help="Re-extract the PDF even if a cached extraction exists."),
+    pdf: Path = PdfOption,
+) -> None:
+    """Stages 1-4: extract, chunk, embed, and save the index (run this once per PDF/settings)."""
+    from rag_demo import index as indexing
+
+    pdf_path = _resolve_pdf(pdf)
+    if strategy == "paragraph":
+        overlap = 0
+    started = time.perf_counter()
+
+    console.rule("[bold]1. Extract")
+    if fresh:
+        pages = _extract_with_progress(pdf_path, extraction.page_count(pdf_path))
+    else:
+        pages = _load_pages(pdf_path)
+    with_text = sum(1 for p in pages if p.text)
+    console.print(f"{len(pages)} pages, {with_text} with text")
+
+    console.rule("[bold]2. Chunk")
+    try:
+        chunks = chunking.chunk_pages(pages, strategy, chunk_size, overlap)
+    except ValueError as err:
+        console.print(f"[bold red]Error:[/bold red] {err}")
+        raise typer.Exit(code=1)
+    if not chunks:
+        console.print("[yellow]No chunks: the PDF has no extractable text.[/yellow]")
+        raise typer.Exit(code=1)
+    console.print(f"{len(chunks):,} chunks ({strategy}, size {chunk_size}, overlap {overlap})")
+
+    console.rule("[bold]3. Embed")
+    embedder = _get_embedder(embedder_kind)
+    embed_started = time.perf_counter()
+    try:
+        vectors = _embed_with_progress(embedder, chunks)
+    except Exception as err:  # e.g. network or auth errors from a hosted embedder
+        console.print(f"[bold red]Embedding failed:[/bold red] {type(err).__name__}: {err}")
+        raise typer.Exit(code=1)
+    console.print(
+        f"{vectors.shape[0]:,} x {vectors.shape[1]} matrix with {embedder.name} "
+        f"in {time.perf_counter() - embed_started:.1f}s"
+    )
+
+    console.rule("[bold]4. Index")
+    index = indexing.NumpyIndex()
+    index.add(vectors, chunks)
+    # Remove any old manifest first, so a half-written index never looks valid.
+    (config.INDEX_DIR / indexing.MANIFEST_FILE).unlink(missing_ok=True)
+    index.save(config.INDEX_DIR)
+    manifest = indexing.Manifest(
+        embedding_model=embedder.name,
+        dimension=int(vectors.shape[1]),
+        chunk_strategy=strategy,
+        chunk_size=chunk_size,
+        chunk_overlap=overlap,
+        chunk_count=len(chunks),
+        pdf_name=pdf_path.name,
+        pdf_sha256=extraction.pdf_sha256(pdf_path),
+        index_backend="numpy",
+        built_at=indexing.Manifest.now(),
+    )
+    manifest.save(config.INDEX_DIR)  # written last: a manifest means the index is complete
+    console.print(f"Saved to {config.INDEX_DIR}")
+    console.print(f"[green]Done in {time.perf_counter() - started:.1f}s.[/green] Inspect it with: rag-demo index-info")
+
+
+@app.command("index-info")
+def index_info() -> None:
+    """Show how the saved index was built (its manifest) and the files it uses."""
+    from rag_demo import embed as embedding, index as indexing
+
+    try:
+        manifest = indexing.Manifest.load(config.INDEX_DIR)
+    except indexing.IndexNotFoundError as err:
+        console.print(f"[yellow]{err}[/yellow]")
+        raise typer.Exit(code=1)
+
+    table = Table(title="Index manifest", show_header=True)
+    table.add_column("Field")
+    table.add_column("Value")
+    for field, value in vars(manifest).items():
+        table.add_row(field, f"{value:,}" if isinstance(value, int) else str(value))
+    console.print(table)
+
+    files = Table(title="Index files", show_header=True)
+    files.add_column("File")
+    files.add_column("Size", justify="right")
+    for name in (indexing.NumpyIndex.VECTORS_FILE, indexing.NumpyIndex.CHUNKS_FILE, indexing.MANIFEST_FILE):
+        path = config.INDEX_DIR / name
+        files.add_row(name, _human_size(path.stat().st_size) if path.is_file() else "[red]missing[/red]")
+    console.print(files)
+    console.print(f"[dim]in {config.INDEX_DIR}[/dim]")
+
+    # Is the index still valid for the current PDF and embedder?
+    current = embedding.embedder_name(config.EMBEDDER)
+    if current == manifest.embedding_model:
+        console.print(f"[green]✓[/green] Current embedder ({current}) matches the index.")
+    else:
+        console.print(
+            f"[red]✗[/red] Current embedder is {current}, but the index was built with "
+            f"{manifest.embedding_model}. Searches will be refused until you rebuild with 'rag-demo ingest'."
+        )
+    pdf_path = config.DATA_DIR / manifest.pdf_name
+    if not pdf_path.is_file():
+        console.print(f"[yellow]![/yellow] {manifest.pdf_name} is no longer in {config.DATA_DIR}.")
+    elif extraction.pdf_sha256(pdf_path) == manifest.pdf_sha256:
+        console.print(f"[green]✓[/green] {manifest.pdf_name} is unchanged since the index was built.")
+    else:
+        console.print(
+            f"[yellow]![/yellow] {manifest.pdf_name} has changed since the index was built. "
+            "Rebuild with 'rag-demo ingest'."
+        )
 
 
 @app.callback()

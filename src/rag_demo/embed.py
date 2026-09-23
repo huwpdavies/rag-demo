@@ -91,7 +91,7 @@ class LocalEmbedder(Embedder):
         # model_name is a Hugging Face model ID, or a folder holding a downloaded
         # copy (for machines that can't reach huggingface.co). Either way the
         # index records the model's name, not where it was loaded from.
-        self.name = f"local:{Path(model_name).name}"
+        self.name = embedder_name("local", model_name)
         try:
             self.model = SentenceTransformer(model_name, device="cpu")
         except OSError as err:
@@ -120,13 +120,25 @@ class VoyageEmbedder(Embedder):
                 "EMBEDDER is 'voyage' but VOYAGE_API_KEY is missing. Add it to .env, "
                 "or use the local embedder (--embedder local)."
             )
-        self.name = f"voyage:{model_name}"
+        self.name = embedder_name("voyage", model_name)
         self.model_name = model_name
         self.client = voyageai.Client(api_key=key)
 
     def _embed(self, texts: list[str], input_type: str) -> np.ndarray:
         result = self.client.embed(texts, model=self.model_name, input_type=input_type)
         return np.asarray(result.embeddings, dtype=np.float32)
+
+
+def embedder_name(kind: str, model_name: str | None = None) -> str:
+    """The name an embedder records in the index manifest, e.g. "local:all-MiniLM-L6-v2".
+
+    Available without loading the model, so an index can be checked cheaply.
+    """
+    if kind == "local":
+        return f"local:{Path(model_name or config.LOCAL_EMBED_MODEL).name}"
+    if kind == "voyage":
+        return f"voyage:{model_name or config.VOYAGE_EMBED_MODEL}"
+    raise ValueError(f"Unknown embedder {kind!r}; choose from {', '.join(EMBEDDERS)}.")
 
 
 def get_embedder(kind: str = config.EMBEDDER) -> Embedder:
