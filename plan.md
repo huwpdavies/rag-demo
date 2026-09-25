@@ -14,7 +14,7 @@ A small Python project that demonstrates how a Retrieval-Augmented Generation (R
 ## Key facts and decisions
 
 - **Anthropic does not offer an embedding model.** The Anthropic key is used for generation only. Embeddings come from a local model, so no second API key is needed. (Voyage AI, Anthropic's recommended embeddings provider, was considered as an optional swap but dropped to keep setup lightweight: it needs its own key, and its Python package pulls in LangChain.)
-- **Indexing starts with NumPy, then Chroma.** The NumPy index shows exactly what a vector index is. Chroma is added later behind the same interface to show that a vector database is a faster, more convenient version of the same idea.
+- **Indexing uses NumPy only.** The NumPy index shows exactly what a vector index is: a matrix searched with one dot product (about 20 ms for ~1,000 chunks). A vector database such as Chroma was planned as a second backend but dropped to keep setup lightweight (see Phase 9); the `VectorIndex` interface leaves room to add one later.
 
 ## Tech stack
 
@@ -23,7 +23,7 @@ A small Python project that demonstrates how a Retrieval-Augmented Generation (R
 | PDF extraction | `pypdf` | Simple; keeps page numbers for citations |
 | Chunking | Hand-written, two strategies | Compare fixed-size and paragraph-aware splits |
 | Embedding | `sentence-transformers` (`all-MiniLM-L6-v2`) | Free, offline, small (384-dim vectors), no API key |
-| Indexing | NumPy matrix + JSON metadata; Chroma as second backend | Transparent first, realistic second |
+| Indexing | NumPy matrix + JSON metadata | Transparent, fast enough at this scale, no extra dependencies |
 | Retrieval | Cosine similarity, top-k | Easy to print and explain scores |
 | Augmentation + generation | `anthropic` SDK, `claude-sonnet-5` (or `claude-haiku-4-5-20251001` for lower cost) | Uses the existing API key |
 | Interface | CLI built with `typer` + `rich` | Each stage becomes a demo command |
@@ -35,13 +35,13 @@ A small Python project that demonstrates how a Retrieval-Augmented Generation (R
 ```
 rag-demo/
 ├── data/                   # the source PDF goes here
-├── index/                  # generated: vectors.npy, chunks.json, manifest.json, chroma/
+├── index/                  # generated: vectors.npy, chunks.json, manifest.json, pages/ (extraction cache)
 ├── src/rag_demo/
-│   ├── config.py           # chunk size, overlap, top-k, model names, index backend
+│   ├── config.py           # chunk size, overlap, top-k, model names
 │   ├── extract.py          # PDF -> list of (page_number, text)
 │   ├── chunk.py            # text -> chunks with metadata
 │   ├── embed.py            # Embedder interface: LocalEmbedder
-│   ├── index.py            # VectorIndex interface: NumpyIndex, ChromaIndex
+│   ├── index.py            # VectorIndex interface: NumpyIndex
 │   ├── retrieve.py         # query -> top-k chunks with scores
 │   ├── augment.py          # chunks + question -> final prompt
 │   ├── generate.py         # prompt -> Claude answer
@@ -63,7 +63,6 @@ rag-demo/
 | `CHUNK_SIZE` | 800 characters |
 | `CHUNK_OVERLAP` | 150 characters |
 | `EMBED_MODEL` | `all-MiniLM-L6-v2` (or a path to a downloaded copy) |
-| `INDEX_BACKEND` | `numpy` |
 | `TOP_K` | 5 |
 | `CLAUDE_MODEL` | `claude-sonnet-5` |
 | `MAX_TOKENS` | 1024 |
@@ -153,22 +152,17 @@ All settings live in `config.py` and can be overridden by CLI flags.
 
 **Done when:** `rag-demo ask "..."` returns a cited answer, and `rag-demo ask "..." --compare` shows the RAG and no-RAG answers side by side.
 
-## Phase 9: Second index backend (Chroma)
+## Phase 9: Second index backend (Chroma) (skipped)
 
-- Add `ChromaIndex` implementing the same `VectorIndex` interface, stored under `index/chroma/`.
-- **Pass embeddings from `embed.py` explicitly.** Do not use Chroma's built-in embedding function, which would hide the embedding stage and risk a model mismatch.
-- **Set the distance metric to cosine explicitly** when creating the collection (Chroma's default has been L2, and the configuration syntax differs between Chroma versions; check the installed version's docs).
-- Chroma returns *distances* (lower is better). Convert to similarity (`1 - distance` for cosine) so both backends report scores the same way.
-- Switch backends with `INDEX_BACKEND=numpy|chroma` or `--backend`.
+Skipped to keep setup lightweight. At this scale (~1,000 chunks) the NumPy index searches every chunk in about 20 ms, so a vector database brings no practical gain, while `chromadb` adds a large set of dependencies (onnxruntime, gRPC, OpenTelemetry), version-specific configuration, and telemetry to disable.
 
-**Done when:** `rag-demo compare-backends "your question"` runs the same query against both indexes and shows the two top-k lists side by side with matching (or near-matching) chunks and scores. Briefly note in the output that Chroma uses approximate nearest-neighbour search (HNSW), so tiny differences on large indexes are expected.
+What a vector database adds only matters at larger scale: approximate nearest-neighbour search (e.g. HNSW) over millions of vectors, incremental updates instead of full rebuilds, metadata filtering, and running as a shared service. In a demo, this point can be made by walking through `index.py`. A backend can still be added later by implementing the `VectorIndex` interface; the manifest already records `index_backend`.
 
 ## Phase 10: Tests and evaluation
 
 - **Unit tests (`pytest`):**
   - Chunker: overlap length is correct; concatenating chunks (minus overlaps) reproduces the source text; no empty chunks.
   - NumPy index: known vectors return known nearest neighbours; save/load round-trips.
-  - Chroma index: returns the same top result as NumPy for a small fixed set of vectors.
   - Manifest: loading with a mismatched embedding model raises a clear error.
 - **Retrieval evaluation:**
   - `eval/questions.json` holds 5 to 10 questions written from the PDF, each with the page number that holds the answer.
@@ -181,7 +175,7 @@ All settings live in `config.py` and can be overridden by CLI flags.
 
 - One-paragraph explanation of RAG in plain language.
 - A section per stage: what it does, why it matters, which module holds it, and the command that demonstrates it.
-- A "Live demo script": the exact sequence of commands to run in front of an audience, from `extract` through `ask --compare` and `compare-backends`.
+- A "Live demo script": the exact sequence of commands to run in front of an audience, from `extract` through `ask --compare`.
 - Setup steps, including how to use a downloaded copy of the embedding model on networks that block Hugging Face.
 
 **Done when:** a new user can follow the README from a fresh clone to a working `ask` command.
@@ -197,7 +191,6 @@ All settings live in `config.py` and can be overridden by CLI flags.
 5. `rag-demo search "..."`: show ranked chunks and scores.
 6. `rag-demo ask "..." --show-prompt`: show the augmented prompt.
 7. `rag-demo ask "..." --compare`: RAG answer versus no-RAG answer.
-8. `rag-demo compare-backends "..."`: NumPy versus Chroma.
 
 ## Out of scope (first version)
 
@@ -205,3 +198,4 @@ All settings live in `config.py` and can be overridden by CLI flags.
 - Multiple documents
 - Web UI (a Streamlit page is a possible follow-up)
 - Hybrid search (BM25 plus vectors) and reranking
+- A vector database backend (Chroma); see Phase 9

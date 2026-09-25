@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
 INDEX_DIR = PROJECT_ROOT / "index"
+EVAL_QUESTIONS = PROJECT_ROOT / "eval" / "questions.json"
 ENV_FILE = PROJECT_ROOT / ".env"
 
 # Load .env once, on import. Variables already set in the shell take precedence.
@@ -33,7 +34,6 @@ CHUNK_OVERLAP = 150  # characters shared between neighbouring fixed-size chunks
 # Embedding model (sentence-transformers, runs locally). A Hugging Face model ID,
 # or a path to a downloaded copy of the model folder.
 EMBED_MODEL = os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2")
-INDEX_BACKEND = "numpy"  # "numpy" or "chroma"
 TOP_K = 5
 CLAUDE_MODEL = "claude-sonnet-5"
 MAX_TOKENS = 1024

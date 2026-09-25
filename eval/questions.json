@@ -1,0 +1,50 @@
+{
+  "description": "Retrieval evaluation set for salt-fat-acid-heat.pdf. Each question is paraphrased (not copied from the book) so retrieval is tested on meaning, not matching words. 'pages' are PDF page numbers (as shown by rag-demo extract), not the printed book's page numbers; a question counts as a hit if a retrieved chunk comes from any listed page. Drafted by Claude from the extracted text; review before relying on it.",
+  "questions": [
+    {
+      "question": "Why does the author advise against cooking with iodised table salt?",
+      "pages": [31],
+      "answer": "It makes everything taste slightly metallic."
+    },
+    {
+      "question": "How much salt should go in the water for boiling pasta or blanching vegetables?",
+      "pages": [46, 63, 131, 282],
+      "answer": "Enough to make it as salty as the sea (or your memory of it)."
+    },
+    {
+      "question": "Is it true that salting the cooking water makes dried beans tough?",
+      "pages": [43, 44],
+      "answer": "No: salt does not toughen dried beans; the usual cause of tough beans is undercooking."
+    },
+    {
+      "question": "At what point should mushrooms be salted so they keep their texture?",
+      "pages": [43],
+      "answer": "Wait until they have just begun to brown in the pan."
+    },
+    {
+      "question": "Which cooking oils work well when you don't want the fat to add any flavour?",
+      "pages": [78],
+      "answer": "Neutral seed or nut oils such as peanut, expeller-pressed canola, or grapeseed, which also have high smoke points."
+    },
+    {
+      "question": "At what temperature does butter go from solid to melted?",
+      "pages": [92],
+      "answer": "It stays solid from 0°C until it melts at 32°C."
+    },
+    {
+      "question": "What is the chemical reaction that browns meat and baked goods called?",
+      "pages": [124],
+      "answer": "The Maillard reaction, named after Louis-Camille Maillard."
+    },
+    {
+      "question": "Why does meat keep cooking after it comes off the heat?",
+      "pages": [159],
+      "answer": "Carryover cooking: residual heat trapped in the food keeps the reactions going."
+    },
+    {
+      "question": "How long should the turkey breast be left in its brine?",
+      "pages": [376, 377],
+      "answer": "Refrigerate overnight, or up to 24 hours."
+    }
+  ]
+}

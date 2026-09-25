@@ -634,6 +634,73 @@ def ask(
     )
 
 
+@app.command("eval")
+def eval_retrieval(
+    strategy: str = typer.Option(None, "--strategy", help="Rebuild a temporary index with this chunk strategy."),
+    chunk_size: int = typer.Option(None, "--chunk-size", help="Rebuild a temporary index with this chunk size."),
+    overlap: int = typer.Option(None, "--overlap", help="Rebuild a temporary index with this overlap."),
+    questions_path: Path = typer.Option(config.EVAL_QUESTIONS, "--questions", help="Questions file (JSON)."),
+) -> None:
+    """Measure retrieval: how often the right page is in the top 1, 3 and 5 chunks."""
+    from rag_demo import evaluate as evaluation
+
+    try:
+        questions = evaluation.load_questions(questions_path)
+    except (OSError, ValueError, KeyError, TypeError) as err:
+        console.print(f"[bold red]Error:[/bold red] could not read questions from {questions_path}: {err}")
+        raise typer.Exit(code=1)
+    if not questions:
+        console.print(f"[yellow]{questions_path} has no questions.[/yellow]")
+        raise typer.Exit(code=1)
+
+    if strategy is None and chunk_size is None and overlap is None:
+        # Evaluate the saved index as built by 'rag-demo ingest'.
+        retriever = _open_retriever()
+        index, embedder, m = retriever.index, retriever.embedder, retriever.manifest
+        label = f"saved index: {m.chunk_strategy}, size {m.chunk_size}, overlap {m.chunk_overlap}, {m.chunk_count:,} chunks"
+    else:
+        # Build a temporary index in memory with the requested settings; the saved one is untouched.
+        strategy = strategy or config.CHUNK_STRATEGY
+        chunk_size = chunk_size or config.CHUNK_SIZE
+        overlap = 0 if strategy == "paragraph" else (config.CHUNK_OVERLAP if overlap is None else overlap)
+        chunks = _load_chunks(_resolve_pdf(None), strategy, chunk_size, overlap)
+        embedder = _get_embedder()
+        columns = (TextColumn("Building temporary index"), BarColumn(), MofNCompleteColumn(), TimeElapsedColumn())
+        with Progress(*columns, console=console, transient=True) as progress:
+            task = progress.add_task("build", total=len(chunks))
+            index = evaluation.build_index(chunks, embedder, on_batch=lambda n: progress.advance(task, n))
+        label = f"temporary index: {strategy}, size {chunk_size}, overlap {overlap}, {len(chunks):,} chunks"
+
+    results = evaluation.evaluate(index, embedder, questions)
+
+    k_max = max(evaluation.HIT_RATE_KS)
+    table = Table(title=f"Retrieval evaluation ({label})", show_header=True)
+    table.add_column("#", justify="right")
+    table.add_column("Question")
+    table.add_column("Answer page(s)", justify="right")
+    table.add_column("First hit", justify="right")
+    table.add_column("Top result page(s)", justify="right", no_wrap=True)
+    for i, r in enumerate(results, start=1):
+        if r.first_hit_rank is None:
+            rank = f"[red]miss (not in top {k_max})[/red]"
+        else:
+            colour = "green" if r.first_hit_rank == 1 else "yellow"
+            rank = f"[{colour}]rank {r.first_hit_rank}[/{colour}]"
+        table.add_row(
+            str(i), Text(r.item.question), ", ".join(map(str, r.item.pages)), rank,
+            _pages_label(r.top_pages) if r.top_pages else "",
+        )
+    console.print(table)
+
+    summary = Table(title="Hit rate", show_header=True)
+    summary.add_column("k", justify="right")
+    summary.add_column("Questions with an answer page in the top k", justify="right")
+    for k in evaluation.HIT_RATE_KS:
+        hits = sum(1 for r in results if r.first_hit_rank is not None and r.first_hit_rank <= k)
+        summary.add_row(str(k), f"{hits} / {len(results)}  ({evaluation.hit_rate(results, k):.0%})")
+    console.print(summary)
+
+
 @app.callback()
 def main() -> None:
     """A step-by-step Retrieval-Augmented Generation demo over a single PDF."""
