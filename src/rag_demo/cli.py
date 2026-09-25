@@ -521,6 +521,49 @@ def search(
     )
 
 
+def _print_prompt(prompt) -> None:
+    """Show the exact system prompt and user message, with a token estimate."""
+    console.print(Panel(Text(prompt.system), title="System prompt", title_align="left", border_style="magenta"))
+    console.print(Panel(Text(prompt.user), title="User message", title_align="left", border_style="cyan"))
+    tokens = prompt.estimated_tokens
+    table = Table(title="Estimated input tokens (characters ÷ 4)", show_header=True)
+    table.add_column("Part")
+    table.add_column("Characters", justify="right")
+    table.add_column("≈ Tokens", justify="right")
+    table.add_row("System prompt", f"{len(prompt.system):,}", f"{tokens['system']:,}")
+    table.add_row("User message", f"{len(prompt.user):,}", f"{tokens['user']:,}")
+    table.add_row("[bold]Total[/bold]", f"{len(prompt.system) + len(prompt.user):,}", f"[bold]{tokens['total']:,}[/bold]")
+    console.print(table)
+
+
+@app.command()
+def ask(
+    question: str = typer.Argument(..., help="The question to ask about the PDF."),
+    top_k: int = typer.Option(config.TOP_K, "--top-k", "-k", help="Number of chunks to include as context."),
+    embedder_kind: str = EmbedderOption,
+    show_prompt: bool = typer.Option(False, "--show-prompt", help="Print the full prompt; send nothing to the API."),
+) -> None:
+    """Stages 5-6: retrieve chunks and assemble the prompt for Claude."""
+    from rag_demo.augment import build_prompt
+
+    if not show_prompt:
+        console.print(
+            "[yellow]Sending the prompt to Claude is added in Phase 8.[/yellow] "
+            "For now, use --show-prompt to see the prompt that would be sent."
+        )
+        raise typer.Exit(code=1)
+    if top_k < 1:
+        console.print("[bold red]Error:[/bold red] --top-k must be at least 1.")
+        raise typer.Exit(code=1)
+
+    retriever = _open_retriever(embedder_kind)
+    results = retriever.retrieve(question, top_k)
+    prompt = build_prompt(question, results, retriever.manifest.pdf_name)
+
+    _print_prompt(prompt)
+    console.print("[green]Nothing has been sent to the API.[/green]")
+
+
 @app.callback()
 def main() -> None:
     """A step-by-step Retrieval-Augmented Generation demo over a single PDF."""
