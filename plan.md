@@ -13,7 +13,7 @@ A small Python project that demonstrates how a Retrieval-Augmented Generation (R
 
 ## Key facts and decisions
 
-- **Anthropic does not offer an embedding model.** The Anthropic key is used for generation only. Embeddings come from a local model by default, with Voyage AI (Anthropic's recommended embeddings provider) as an optional swap.
+- **Anthropic does not offer an embedding model.** The Anthropic key is used for generation only. Embeddings come from a local model, so no second API key is needed. (Voyage AI, Anthropic's recommended embeddings provider, was considered as an optional swap but dropped to keep setup lightweight: it needs its own key, and its Python package pulls in LangChain.)
 - **Indexing starts with NumPy, then Chroma.** The NumPy index shows exactly what a vector index is. Chroma is added later behind the same interface to show that a vector database is a faster, more convenient version of the same idea.
 
 ## Tech stack
@@ -22,7 +22,7 @@ A small Python project that demonstrates how a Retrieval-Augmented Generation (R
 |---|---|---|
 | PDF extraction | `pypdf` | Simple; keeps page numbers for citations |
 | Chunking | Hand-written, two strategies | Compare fixed-size and paragraph-aware splits |
-| Embedding | `sentence-transformers` (`all-MiniLM-L6-v2`); `voyageai` optional | Free, offline, small (384-dim vectors) |
+| Embedding | `sentence-transformers` (`all-MiniLM-L6-v2`) | Free, offline, small (384-dim vectors), no API key |
 | Indexing | NumPy matrix + JSON metadata; Chroma as second backend | Transparent first, realistic second |
 | Retrieval | Cosine similarity, top-k | Easy to print and explain scores |
 | Augmentation + generation | `anthropic` SDK, `claude-sonnet-5` (or `claude-haiku-4-5-20251001` for lower cost) | Uses the existing API key |
@@ -40,7 +40,7 @@ rag-demo/
 │   ├── config.py           # chunk size, overlap, top-k, model names, index backend
 │   ├── extract.py          # PDF -> list of (page_number, text)
 │   ├── chunk.py            # text -> chunks with metadata
-│   ├── embed.py            # Embedder interface: LocalEmbedder, VoyageEmbedder
+│   ├── embed.py            # Embedder interface: LocalEmbedder
 │   ├── index.py            # VectorIndex interface: NumpyIndex, ChromaIndex
 │   ├── retrieve.py         # query -> top-k chunks with scores
 │   ├── augment.py          # chunks + question -> final prompt
@@ -48,7 +48,7 @@ rag-demo/
 │   └── cli.py              # one command per stage
 ├── tests/
 ├── eval/questions.json     # small hand-written Q&A set
-├── .env.example            # ANTHROPIC_API_KEY=, VOYAGE_API_KEY=
+├── .env.example            # ANTHROPIC_API_KEY=, optional EMBED_MODEL=
 ├── .gitignore              # .env, index/, data/*.pdf
 ├── pyproject.toml
 ├── plan.md
@@ -62,7 +62,7 @@ rag-demo/
 | `CHUNK_STRATEGY` | `fixed` |
 | `CHUNK_SIZE` | 800 characters |
 | `CHUNK_OVERLAP` | 150 characters |
-| `EMBEDDER` | `local` |
+| `EMBED_MODEL` | `all-MiniLM-L6-v2` (or a path to a downloaded copy) |
 | `INDEX_BACKEND` | `numpy` |
 | `TOP_K` | 5 |
 | `CLAUDE_MODEL` | `claude-sonnet-5` |
@@ -75,7 +75,7 @@ All settings live in `config.py` and can be overridden by CLI flags.
 ## Phase 1: Setup
 
 - Create the project with `pyproject.toml`, a virtual environment, and a `rag-demo` console entry point.
-- Load `ANTHROPIC_API_KEY` (and optional `VOYAGE_API_KEY`) from `.env` via `python-dotenv`.
+- Load `ANTHROPIC_API_KEY` from `.env` via `python-dotenv`.
 - Add `.env.example` and a `.gitignore` covering `.env`, `index/`, and `data/*.pdf`.
 - Print a clear error if the Anthropic key is missing (without echoing any key value).
 
@@ -102,7 +102,7 @@ All settings live in `config.py` and can be overridden by CLI flags.
 
 - Define an `Embedder` interface with `embed_documents(texts)` and `embed_query(text)`.
 - `LocalEmbedder` uses `sentence-transformers` with `all-MiniLM-L6-v2`.
-- `VoyageEmbedder` uses the `voyageai` package, passing `input_type="document"` for chunks and `input_type="query"` for questions. Only active when `EMBEDDER=voyage` and a Voyage key is present.
+- The model loads from the local copy when one exists, and only contacts huggingface.co on first use. `EMBED_MODEL` can point to a downloaded model folder for networks that block Hugging Face.
 - Embed in batches and normalise every vector to unit length.
 
 **Done when:** `rag-demo embed` prints the matrix shape (for a 142-chunk PDF: `142 x 384`), time taken, and the first eight numbers of one vector, so the audience sees what an embedding looks like.
@@ -182,7 +182,7 @@ All settings live in `config.py` and can be overridden by CLI flags.
 - One-paragraph explanation of RAG in plain language.
 - A section per stage: what it does, why it matters, which module holds it, and the command that demonstrates it.
 - A "Live demo script": the exact sequence of commands to run in front of an audience, from `extract` through `ask --compare` and `compare-backends`.
-- Setup steps, including how to switch to Voyage embeddings.
+- Setup steps, including how to use a downloaded copy of the embedding model on networks that block Hugging Face.
 
 **Done when:** a new user can follow the README from a fresh clone to a working `ask` command.
 

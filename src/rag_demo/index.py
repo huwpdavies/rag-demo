@@ -77,10 +77,10 @@ class Manifest:
         """Refuse to use this index with vectors from a different model."""
         if embedding_model != self.embedding_model:
             raise IndexMismatchError(
-                f"This index was built with '{self.embedding_model}', but the current embedder is "
+                f"This index was built with '{self.embedding_model}', but the current embedding model is "
                 f"'{embedding_model}'. Vectors from different embedding models live in different "
                 "spaces, so comparing them gives meaningless results. Rebuild the index with "
-                "'rag-demo ingest', or switch back to the original embedder."
+                "'rag-demo ingest', or set EMBED_MODEL back to the original model."
             )
 
 

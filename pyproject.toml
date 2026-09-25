@@ -16,10 +16,10 @@ dependencies = [
     "pypdf>=4",
     "numpy>=1.26",
     "sentence-transformers>=3",
+    "anthropic>=1",
 ]
 
 [project.optional-dependencies]
-voyage = ["voyageai>=0.3"]
 dev = ["pytest>=8"]
 
 [project.scripts]

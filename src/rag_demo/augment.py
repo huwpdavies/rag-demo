@@ -40,8 +40,10 @@ cover. Do not guess.
 # How the answer cites a chunk: "[chunk 12, p. 34]". Used to find citations later.
 CITATION_PATTERN = re.compile(r"\[chunk (\d+),\s*pp?\.\s*([\d\-–]+)\]")
 
-# A rough rule of thumb for English text: about 4 characters per token.
-CHARS_PER_TOKEN = 4
+# A rough rule of thumb. The common "4 characters per token" undercounts for
+# Claude's current tokenizer: on this book the API reported about 2.7 characters
+# per token (including the XML tags), so 3 gives a closer, still-simple estimate.
+CHARS_PER_TOKEN = 3
 
 
 def page_attribute(pages: list[int]) -> str:

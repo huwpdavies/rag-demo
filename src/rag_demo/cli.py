@@ -11,7 +11,7 @@ from pathlib import Path
 
 import typer
 from rich.columns import Columns
-from rich.console import Console
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeElapsedColumn
 from rich.table import Table
@@ -47,11 +47,6 @@ def check() -> None:
         "ANTHROPIC_API_KEY",
         status(config.anthropic_api_key() is not None),
         "generation (required)",
-    )
-    table.add_row(
-        "VOYAGE_API_KEY",
-        status(config.voyage_api_key() is not None),
-        "embeddings (optional, only when EMBEDDER=voyage)",
     )
     console.print(table)
 
@@ -266,16 +261,13 @@ def chunk(
         )
 
 
-EmbedderOption = typer.Option(config.EMBEDDER, "--embedder", help="local or voyage.")
-
-
-def _get_embedder(kind: str):
+def _get_embedder():
     from rag_demo import embed as embedding  # imports numpy; keep other commands fast
 
     try:
-        with console.status(f"Loading the {kind} embedding model…"):
-            return embedding.get_embedder(kind)
-    except (ValueError, config.MissingAPIKeyError, embedding.EmbedderUnavailableError, ImportError) as err:
+        with console.status(f"Loading the embedding model ({config.EMBED_MODEL})…"):
+            return embedding.get_embedder()
+    except (embedding.EmbedderUnavailableError, ImportError) as err:
         console.print(f"[bold red]Error:[/bold red] {err}")
         raise typer.Exit(code=1)
 
@@ -292,7 +284,6 @@ def embed(
     strategy: str = StrategyOption,
     chunk_size: int = ChunkSizeOption,
     overlap: int = OverlapOption,
-    embedder_kind: str = EmbedderOption,
     show: int = typer.Option(0, "--show", help="ID of the chunk whose vector is printed."),
     pdf: Path = PdfOption,
 ) -> None:
@@ -307,11 +298,11 @@ def embed(
         console.print(f"[bold red]Error:[/bold red] --show must be between 0 and {len(chunks) - 1}.")
         raise typer.Exit(code=1)
 
-    embedder = _get_embedder(embedder_kind)
+    embedder = _get_embedder()
     started = time.perf_counter()
     try:
         vectors = _embed_with_progress(embedder, chunks)
-    except Exception as err:  # e.g. network or auth errors from a hosted embedder
+    except Exception as err:  # e.g. running out of memory
         console.print(f"[bold red]Embedding failed:[/bold red] {type(err).__name__}: {err}")
         raise typer.Exit(code=1)
     elapsed = time.perf_counter() - started
@@ -352,7 +343,6 @@ def ingest(
     strategy: str = StrategyOption,
     chunk_size: int = ChunkSizeOption,
     overlap: int = OverlapOption,
-    embedder_kind: str = EmbedderOption,
     fresh: bool = typer.Option(False, "--fresh", help="Re-extract the PDF even if a cached extraction exists."),
     pdf: Path = PdfOption,
 ) -> None:
@@ -384,11 +374,11 @@ def ingest(
     console.print(f"{len(chunks):,} chunks ({strategy}, size {chunk_size}, overlap {overlap})")
 
     console.rule("[bold]3. Embed")
-    embedder = _get_embedder(embedder_kind)
+    embedder = _get_embedder()
     embed_started = time.perf_counter()
     try:
         vectors = _embed_with_progress(embedder, chunks)
-    except Exception as err:  # e.g. network or auth errors from a hosted embedder
+    except Exception as err:  # e.g. running out of memory
         console.print(f"[bold red]Embedding failed:[/bold red] {type(err).__name__}: {err}")
         raise typer.Exit(code=1)
     console.print(
@@ -447,12 +437,12 @@ def index_info() -> None:
     console.print(f"[dim]in {config.INDEX_DIR}[/dim]")
 
     # Is the index still valid for the current PDF and embedder?
-    current = embedding.embedder_name(config.EMBEDDER)
+    current = embedding.embedder_name()
     if current == manifest.embedding_model:
-        console.print(f"[green]✓[/green] Current embedder ({current}) matches the index.")
+        console.print(f"[green]✓[/green] Current embedding model ({current}) matches the index.")
     else:
         console.print(
-            f"[red]✗[/red] Current embedder is {current}, but the index was built with "
+            f"[red]✗[/red] Current embedding model is {current}, but the index was built with "
             f"{manifest.embedding_model}. Searches will be refused until you rebuild with 'rag-demo ingest'."
         )
     pdf_path = config.DATA_DIR / manifest.pdf_name
@@ -467,17 +457,17 @@ def index_info() -> None:
         )
 
 
-def _open_retriever(embedder_kind: str):
+def _open_retriever():
     """Load the saved index and its embedder, or exit with a clear message."""
     from rag_demo import embed as embedding, index as indexing
     from rag_demo.retrieve import Retriever
 
     try:
         with console.status("Loading the index and embedding model…"):
-            return Retriever.open(config.INDEX_DIR, embedder_kind)
+            return Retriever.open(config.INDEX_DIR)
     except indexing.IndexNotFoundError as err:
         console.print(f"[yellow]{err}[/yellow]")
-    except (indexing.IndexMismatchError, embedding.EmbedderUnavailableError, config.MissingAPIKeyError, ValueError) as err:
+    except (indexing.IndexMismatchError, embedding.EmbedderUnavailableError) as err:
         console.print(f"[bold red]Error:[/bold red] {err}")
     raise typer.Exit(code=1)
 
@@ -490,14 +480,13 @@ def _pages_label(pages: list[int]) -> str:
 def search(
     question: str = typer.Argument(..., help="The question to search for."),
     top_k: int = typer.Option(config.TOP_K, "--top-k", "-k", help="Number of chunks to return."),
-    embedder_kind: str = EmbedderOption,
     preview_chars: int = typer.Option(150, "--preview-chars", help="Characters of each chunk to show."),
 ) -> None:
     """Stage 5: find the chunks most similar to a question (no Claude involved)."""
     if top_k < 1:
         console.print("[bold red]Error:[/bold red] --top-k must be at least 1.")
         raise typer.Exit(code=1)
-    retriever = _open_retriever(embedder_kind)
+    retriever = _open_retriever()
 
     started = time.perf_counter()
     results = retriever.retrieve(question, top_k)
@@ -526,7 +515,9 @@ def _print_prompt(prompt) -> None:
     console.print(Panel(Text(prompt.system), title="System prompt", title_align="left", border_style="magenta"))
     console.print(Panel(Text(prompt.user), title="User message", title_align="left", border_style="cyan"))
     tokens = prompt.estimated_tokens
-    table = Table(title="Estimated input tokens (characters ÷ 4)", show_header=True)
+    from rag_demo.augment import CHARS_PER_TOKEN
+
+    table = Table(title=f"Estimated input tokens (characters ÷ {CHARS_PER_TOKEN})", show_header=True)
     table.add_column("Part")
     table.add_column("Characters", justify="right")
     table.add_column("≈ Tokens", justify="right")
@@ -536,32 +527,111 @@ def _print_prompt(prompt) -> None:
     console.print(table)
 
 
+def _answer_panel(answer, title: str, border_style: str) -> Panel:
+    from rich.markdown import Markdown
+
+    body = Markdown(answer.text)
+    if answer.stop_reason == "max_tokens":
+        body = Group(body, Text("[Answer cut off: it reached the --max-tokens limit.]", style="yellow"))
+    usage = (
+        f"{answer.input_tokens:,} in · {answer.output_tokens:,} out · {answer.seconds:.1f}s · {answer.model}"
+    )
+    return Panel(body, title=title, title_align="left", subtitle=usage, border_style=border_style)
+
+
+def _print_citations(answer, prompt) -> None:
+    """List the chunks the answer cites, and flag citations to chunks Claude wasn't shown."""
+    by_id = {r.chunk.id: (rank, r) for rank, r in enumerate(prompt.results, start=1)}
+    if not answer.citations:
+        console.print("[yellow]The answer cites no chunks.[/yellow]")
+        return
+    table = Table(title="Cited chunks", show_header=True)
+    table.add_column("Chunk", justify="right")
+    table.add_column("Page(s)", justify="right", no_wrap=True)
+    table.add_column("Retrieval rank", justify="right")
+    table.add_column("Score", justify="right")
+    table.add_column("Text (first 100 characters)")
+    for c in answer.citations:
+        if not c.in_context:
+            table.add_row(str(c.chunk_id), c.pages, "[red]not supplied[/red]", "", "[red]Claude cited a chunk it was never shown[/red]")
+            continue
+        rank, r = by_id[c.chunk_id]
+        snippet = " ".join(r.chunk.text.split())[:100] + "…"
+        table.add_row(str(c.chunk_id), _pages_label(r.chunk.pages), f"{rank} of {len(prompt.results)}", f"{r.score:.3f}", Text(snippet))
+    console.print(table)
+    uncited = len(prompt.results) - sum(c.in_context for c in answer.citations)
+    if uncited:
+        console.print(f"[dim]{uncited} of the {len(prompt.results)} retrieved chunks were not cited.[/dim]")
+
+
 @app.command()
 def ask(
     question: str = typer.Argument(..., help="The question to ask about the PDF."),
     top_k: int = typer.Option(config.TOP_K, "--top-k", "-k", help="Number of chunks to include as context."),
-    embedder_kind: str = EmbedderOption,
     show_prompt: bool = typer.Option(False, "--show-prompt", help="Print the full prompt; send nothing to the API."),
+    no_rag: bool = typer.Option(False, "--no-rag", help="Ask Claude with no document context."),
+    compare: bool = typer.Option(False, "--compare", help="Show the RAG and no-RAG answers side by side."),
+    model: str = typer.Option(config.CLAUDE_MODEL, "--model", help="Claude model to use."),
+    max_tokens: int = typer.Option(config.MAX_TOKENS, "--max-tokens", help="Maximum length of each answer, in tokens."),
 ) -> None:
-    """Stages 5-6: retrieve chunks and assemble the prompt for Claude."""
+    """Stages 5-7: retrieve chunks, build the prompt, and get Claude's cited answer."""
+    from rag_demo import generate as generation
     from rag_demo.augment import build_prompt
 
-    if not show_prompt:
-        console.print(
-            "[yellow]Sending the prompt to Claude is added in Phase 8.[/yellow] "
-            "For now, use --show-prompt to see the prompt that would be sent."
-        )
-        raise typer.Exit(code=1)
     if top_k < 1:
         console.print("[bold red]Error:[/bold red] --top-k must be at least 1.")
         raise typer.Exit(code=1)
+    if no_rag and compare:
+        console.print("[bold red]Error:[/bold red] use either --no-rag or --compare, not both.")
+        raise typer.Exit(code=1)
+    if not show_prompt:
+        try:
+            config.require_anthropic_api_key()  # fail before loading the embedding model
+        except config.MissingAPIKeyError as err:
+            console.print(f"[bold red]Error:[/bold red] {err}")
+            raise typer.Exit(code=1)
 
-    retriever = _open_retriever(embedder_kind)
-    results = retriever.retrieve(question, top_k)
-    prompt = build_prompt(question, results, retriever.manifest.pdf_name)
+    try:
+        if no_rag and not show_prompt:  # no retrieval needed
+            with console.status(f"Asking {model} with no context…"):
+                answer = generation.generate_without_context(question, model, max_tokens)
+            console.print(_answer_panel(answer, "Answer without RAG (no document context)", "red"))
+            return
 
-    _print_prompt(prompt)
-    console.print("[green]Nothing has been sent to the API.[/green]")
+        retriever = _open_retriever()
+        results = retriever.retrieve(question, top_k)
+        prompt = build_prompt(question, results, retriever.manifest.pdf_name)
+        if show_prompt:
+            _print_prompt(prompt)
+            console.print("[green]Nothing has been sent to the API.[/green]")
+            return
+
+        with console.status(f"Asking {model} with {len(results)} retrieved chunks…"):
+            answer = generation.generate_answer(prompt, model, max_tokens)
+        rag_panel = _answer_panel(answer, f"Answer with RAG ({len(results)} chunks)", "green")
+
+        if compare:
+            with console.status(f"Asking {model} the same question with no context…"):
+                plain = generation.generate_without_context(question, model, max_tokens)
+            side_by_side = Table.grid(expand=True, padding=(0, 1))
+            side_by_side.add_column(ratio=1)
+            side_by_side.add_column(ratio=1)
+            side_by_side.add_row(rag_panel, _answer_panel(plain, "Without RAG (no document context)", "red"))
+            console.print(side_by_side)
+        else:
+            console.print(rag_panel)
+    except generation.GenerationError as err:
+        console.print(f"[bold red]Error:[/bold red] {err}")
+        raise typer.Exit(code=1)
+
+    _print_citations(answer, prompt)
+    from rag_demo.augment import CHARS_PER_TOKEN
+
+    estimate = prompt.estimated_tokens["total"]
+    console.print(
+        f"[dim]Input tokens: {answer.input_tokens:,} reported by the API "
+        f"(estimated {estimate:,} from characters ÷ {CHARS_PER_TOKEN}).[/dim]"
+    )
 
 
 @app.callback()

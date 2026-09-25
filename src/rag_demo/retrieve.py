@@ -38,14 +38,14 @@ class Retriever:
         self.embedder = embedder
 
     @classmethod
-    def open(cls, index_dir: Path = config.INDEX_DIR, embedder_kind: str = config.EMBEDDER) -> "Retriever":
+    def open(cls, index_dir: Path = config.INDEX_DIR) -> "Retriever":
         """Load the saved index and a matching embedder.
 
         The index manifest is checked against the embedder's name *before* the
         model is loaded, so a mismatch fails fast with a clear explanation.
         """
-        index, manifest = open_index(index_dir, embedder_name(embedder_kind))
-        return cls(index, manifest, get_embedder(embedder_kind))
+        index, manifest = open_index(index_dir, embedder_name())
+        return cls(index, manifest, get_embedder())
 
     def retrieve(self, question: str, k: int = config.TOP_K) -> list[Result]:
         """Return the k chunks most similar to the question, best first."""

@@ -30,10 +30,9 @@ load_dotenv(ENV_FILE)
 CHUNK_STRATEGY = "fixed"  # "fixed" or "paragraph"
 CHUNK_SIZE = 800  # characters per chunk
 CHUNK_OVERLAP = 150  # characters shared between neighbouring fixed-size chunks
-EMBEDDER = os.getenv("EMBEDDER", "local")  # "local" (sentence-transformers) or "voyage"
-# A Hugging Face model ID, or a path to a downloaded copy of the model folder.
-LOCAL_EMBED_MODEL = os.getenv("LOCAL_EMBED_MODEL", "all-MiniLM-L6-v2")
-VOYAGE_EMBED_MODEL = "voyage-3.5"
+# Embedding model (sentence-transformers, runs locally). A Hugging Face model ID,
+# or a path to a downloaded copy of the model folder.
+EMBED_MODEL = os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2")
 INDEX_BACKEND = "numpy"  # "numpy" or "chroma"
 TOP_K = 5
 CLAUDE_MODEL = "claude-sonnet-5"
@@ -52,11 +51,6 @@ def _read_key(name: str) -> str | None:
 def anthropic_api_key() -> str | None:
     """The Anthropic key, used only for the generation stage (Claude)."""
     return _read_key("ANTHROPIC_API_KEY")
-
-
-def voyage_api_key() -> str | None:
-    """The optional Voyage AI key, used only when EMBEDDER is "voyage"."""
-    return _read_key("VOYAGE_API_KEY")
 
 
 class MissingAPIKeyError(RuntimeError):
