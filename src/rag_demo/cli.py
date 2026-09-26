@@ -338,8 +338,8 @@ def _human_size(n: int) -> str:
         n /= 1024
 
 
-@app.command()
-def ingest(
+@app.command("index")
+def build_index(
     strategy: str = StrategyOption,
     chunk_size: int = ChunkSizeOption,
     overlap: int = OverlapOption,
@@ -443,7 +443,7 @@ def index_info() -> None:
     else:
         console.print(
             f"[red]✗[/red] Current embedding model is {current}, but the index was built with "
-            f"{manifest.embedding_model}. Searches will be refused until you rebuild with 'rag-demo ingest'."
+            f"{manifest.embedding_model}. Searches will be refused until you rebuild with 'rag-demo index'."
         )
     pdf_path = config.DATA_DIR / manifest.pdf_name
     if not pdf_path.is_file():
@@ -453,7 +453,7 @@ def index_info() -> None:
     else:
         console.print(
             f"[yellow]![/yellow] {manifest.pdf_name} has changed since the index was built. "
-            "Rebuild with 'rag-demo ingest'."
+            "Rebuild with 'rag-demo index'."
         )
 
 
@@ -654,7 +654,7 @@ def eval_retrieval(
         raise typer.Exit(code=1)
 
     if strategy is None and chunk_size is None and overlap is None:
-        # Evaluate the saved index as built by 'rag-demo ingest'.
+        # Evaluate the saved index as built by 'rag-demo index'.
         retriever = _open_retriever()
         index, embedder, m = retriever.index, retriever.embedder, retriever.manifest
         label = f"saved index: {m.chunk_strategy}, size {m.chunk_size}, overlap {m.chunk_overlap}, {m.chunk_count:,} chunks"

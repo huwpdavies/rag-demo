@@ -4,8 +4,8 @@
 # Generated index files
 index/
 
-# Source PDFs (bring your own)
-data/*.pdf
+# Source PDFs (bring your own), including any parked in subfolders such as data/archive/
+data/**/*.pdf
 
 # Python
 .venv/

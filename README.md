@@ -7,7 +7,7 @@ A small Python project that shows, stage by stage, how Retrieval-Augmented Gener
 A language model like Claude knows a lot, but it has never read *your* document, and when it answers from general knowledge there is no way to check where a claim came from. Retrieval-Augmented Generation fixes this in three steps. First, the document is cut into small passages and each one is turned into a list of numbers (an *embedding*) that captures its meaning. When a question arrives, it is embedded the same way, and the passages whose numbers are closest (the most similar in meaning) are **retrieved**. Those passages are pasted into the prompt, **augmenting** the question with the evidence, and Claude **generates** an answer that uses only that evidence and cites the passage and page for each claim. If the document doesn't contain the answer, Claude says so instead of guessing.
 
 ```
-PDF ─► extract ─► chunk ─► embed ─► index          (done once, by `ingest`)
+PDF ─► extract ─► chunk ─► embed ─► index          (done once, by `index`)
                                       │
 question ─► embed ─► retrieve top-k ◄─┘
                          │
@@ -64,7 +64,7 @@ rag-demo check
 **5. Build the index.** This extracts, chunks and embeds the PDF, then saves the index to `index/`. The first run downloads the embedding model (~90 MB) from huggingface.co; after that it runs offline. For a ~500-page book, allow a minute or two.
 
 ```bash
-rag-demo ingest
+rag-demo index
 ```
 
 **6. Ask a question.**
@@ -75,14 +75,38 @@ rag-demo ask "How long should I brine a turkey?"
 
 ### If huggingface.co is blocked on your network
 
-Some corporate networks and VPNs block the site the embedding model downloads from; `ingest` then stops with *"Could not load the embedding model"*. Either:
+Some corporate networks and VPNs block the site the embedding model downloads from; `rag-demo index` then stops with *"Could not load the embedding model"*. Either:
 
-- connect once from a network that allows it (for example, turn off the VPN) and run `rag-demo ingest`. The model is saved on your machine and later runs never contact the site; or
+- connect once from a network that allows it (for example, turn off the VPN) and run `rag-demo index`. The model is saved on your machine and later runs never contact the site; or
 - download the model folder on another machine, copy it over, and add its path to `.env`. To download it: `pip install huggingface_hub`, then `hf download sentence-transformers/all-MiniLM-L6-v2 --local-dir all-MiniLM-L6-v2`. (A plain `git clone` of the model also works, but only with Git LFS installed; without it you get placeholder files.)
 
   ```
   EMBED_MODEL=C:\path\to\all-MiniLM-L6-v2
   ```
+
+## Sample document
+
+`samples/fernhollow-handbook.pdf` is a three-page employee handbook for **Fernhollow Outdoor Gear Ltd, a fictional company** made up for demonstrations (every page says so in its footer). It works well for a demo because Claude cannot know its policies without retrieval, so the difference between `ask` and `ask --no-rag` is stark. It is small enough to index in seconds, and it deliberately leaves some topics out (pensions, dress code) to show Claude saying "the document does not say". `samples/make_handbook.py` regenerates it after editing (it needs `pip install reportlab`, which is not a project dependency).
+
+To use it in place of another PDF, keep exactly one PDF directly in `data/` (PowerShell shown; PDFs in `data/` and its subfolders are ignored by git):
+
+```powershell
+mkdir data\archive
+Move-Item data\*.pdf data\archive\
+Copy-Item samples\fernhollow-handbook.pdf data\
+rag-demo index
+```
+
+To switch back, move the handbook out of `data/`, move your PDF back, and run `rag-demo index` again. The questions in `eval/questions.json` are for *Salt, Fat, Acid, Heat*, so `rag-demo eval` only makes sense with that book.
+
+Good questions to ask it:
+
+- `rag-demo ask "I left my work laptop on the train. What should I do?"` (the handbook says "lost or stolen", not "left on a train")
+- `rag-demo ask "I'm going to Edinburgh by train for a two-day client meeting. The journey is four and a half hours. What can I claim?"` (combines four expense rules)
+- `rag-demo ask "I joined six years ago. How many days of holiday do I get?"` (needs 27 + 1 + 3)
+- `rag-demo ask "Can I paste a customer's details into ChatGPT to help draft a reply?"`
+- `rag-demo ask "How much does the company contribute to my pension?"` (not in the document)
+- `rag-demo ask "How much notice do I need to give if I resign?" --compare`
 
 ## The pipeline, stage by stage
 
@@ -123,7 +147,7 @@ Every chunk records its character offsets and the page(s) it came from.
 
 **Why it matters:** embedding is the slow part, so it is done once. The manifest guards against a classic silent RAG bug: querying with a different embedding model from the one that built the index. The results would look confident but mean nothing, so the index refuses to load and explains why instead.
 
-**Module:** `index.py` · **Commands:** `rag-demo ingest` runs stages 1 to 4 and saves the index; `rag-demo index-info` prints the manifest and checks it still matches the current model and PDF.
+**Module:** `index.py` · **Commands:** `rag-demo index` runs stages 1 to 4 and saves the index; `rag-demo index-info` prints the manifest and checks it still matches the current model and PDF.
 
 ### 5. Retrieval: question → the most relevant passages
 
@@ -166,7 +190,7 @@ Each question costs well under a cent with the default model.
 
 ## Live demo script
 
-The exact sequence for running this in front of an audience. Run `rag-demo ingest` once beforehand so the model is downloaded and the index exists, and widen the terminal to at least 120 columns.
+The exact sequence for running this in front of an audience. Run `rag-demo index` once beforehand so the model is downloaded and the index exists, and widen the terminal to at least 120 columns.
 
 ```bash
 # 1. Extraction: the raw text, page by page. Point out the page numbers and the empty (image) pages.
@@ -180,7 +204,7 @@ rag-demo chunk --strategy paragraph
 rag-demo embed --show 541
 
 # 4. Indexing: build and inspect the stored index.
-rag-demo ingest
+rag-demo index
 rag-demo index-info
 
 # 5. Retrieval: ranked chunks and similarity scores. No AI model involved yet.
@@ -197,7 +221,7 @@ rag-demo ask "Why should butter be kept cold when making pie dough?" --compare
 rag-demo ask "What does the book recommend for cooking sushi rice?"
 ```
 
-`ingest` takes about a minute; to keep the demo moving, run it beforehand and just show `index-info`. Each command that loads the embedding model (`embed`, `ingest`, `search`, `ask`) takes a few seconds to start.
+`index` takes about a minute; to keep the demo moving, run it beforehand and just show `index-info`. Each command that loads the embedding model (`embed`, `index`, `search`, `ask`) takes a few seconds to start.
 
 ## Evaluation
 
@@ -243,14 +267,14 @@ Defaults live in `src/rag_demo/config.py`; most can be overridden per command wi
 | `CLAUDE_MODEL` | `claude-sonnet-5` | `--model` |
 | `MAX_TOKENS` | 1024 | `--max-tokens` |
 
-Chunk settings passed to `ingest` are recorded in the manifest. Changing `EMBED_MODEL` requires running `rag-demo ingest` again: the saved index will refuse to load otherwise.
+Chunk settings passed to `index` are recorded in the manifest. Changing `EMBED_MODEL` requires running `rag-demo index` again: the saved index will refuse to load otherwise.
 
 ## Project layout
 
 ```
 rag-demo/
 ├── data/                   # your PDF goes here (ignored by git)
-├── index/                  # generated by ingest: vectors.npy, chunks.json, manifest.json, pages/ cache
+├── index/                  # generated by rag-demo index: vectors.npy, chunks.json, manifest.json, pages/ cache
 ├── src/rag_demo/
 │   ├── config.py           # settings and the API key
 │   ├── extract.py          # 1. PDF -> cleaned text per page
@@ -275,8 +299,8 @@ rag-demo/
 | `ANTHROPIC_API_KEY is missing` | Create `.env` from `.env.example` and add your key. |
 | `The API rejected the key (401)` | The key in `.env` is wrong or revoked. |
 | `Could not load the embedding model` | huggingface.co is unreachable; see [If huggingface.co is blocked](#if-huggingfaceco-is-blocked-on-your-network). |
-| `No index found` | Run `rag-demo ingest`. |
-| `This index was built with '...'` | The embedding model changed since the index was built. Run `rag-demo ingest` again. |
+| `No index found` | Run `rag-demo index`. |
+| `This index was built with '...'` | The embedding model changed since the index was built. Run `rag-demo index` again. |
 | `No PDF found` / `Several PDFs` | Put exactly one PDF in `data/`, or pass `--pdf`. |
 | Accents and dashes show as `�` | Your terminal isn't using UTF-8. Windows Terminal handles it; on the old console, run `chcp 65001` first. |
 

@@ -1,7 +1,7 @@
 """Stage 4 of the RAG pipeline: indexing (vectors + chunks -> searchable store).
 
-Embedding every chunk is the slow part of the pipeline, so it is done once, at
-ingest time, and the results are saved. The index is what later answers "which
+Embedding every chunk is the slow part of the pipeline, so it is done once, by
+`rag-demo index`, and the results are saved. The index is what later answers "which
 chunks are most similar to this question?".
 
 The NumPy index shows how simple a vector index can be:
@@ -68,7 +68,7 @@ class Manifest:
     def load(cls, directory: Path) -> "Manifest":
         path = directory / MANIFEST_FILE
         if not path.is_file():
-            raise IndexNotFoundError(f"No index found in {directory}. Build one with: rag-demo ingest")
+            raise IndexNotFoundError(f"No index found in {directory}. Build one with: rag-demo index")
         data = json.loads(path.read_text(encoding="utf-8"))
         known = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in data.items() if k in known})
@@ -80,7 +80,7 @@ class Manifest:
                 f"This index was built with '{self.embedding_model}', but the current embedding model is "
                 f"'{embedding_model}'. Vectors from different embedding models live in different "
                 "spaces, so comparing them gives meaningless results. Rebuild the index with "
-                "'rag-demo ingest', or set EMBED_MODEL back to the original model."
+                "'rag-demo index', or set EMBED_MODEL back to the original model."
             )
 
 
@@ -149,7 +149,7 @@ class NumpyIndex(VectorIndex):
     def load(cls, path: Path) -> "NumpyIndex":
         vectors_path, chunks_path = path / cls.VECTORS_FILE, path / cls.CHUNKS_FILE
         if not (vectors_path.is_file() and chunks_path.is_file()):
-            raise IndexNotFoundError(f"No NumPy index found in {path}. Build one with: rag-demo ingest")
+            raise IndexNotFoundError(f"No NumPy index found in {path}. Build one with: rag-demo index")
         index = cls()
         chunks = [Chunk(**c) for c in json.loads(chunks_path.read_text(encoding="utf-8"))]
         index.add(np.load(vectors_path), chunks)
@@ -170,6 +170,6 @@ def open_index(path: Path, embedding_model: str) -> tuple[VectorIndex, Manifest]
     if len(index) != manifest.chunk_count:
         raise IndexMismatchError(
             f"The manifest lists {manifest.chunk_count} chunks but the index holds {len(index)}. "
-            "The index files are inconsistent; rebuild with 'rag-demo ingest'."
+            "The index files are inconsistent; rebuild with 'rag-demo index'."
         )
     return index, manifest

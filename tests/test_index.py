@@ -72,7 +72,7 @@ def test_loading_with_a_different_embedding_model_raises_a_clear_error(index, tm
         open_index(tmp_path, embedding_model="model-b")
     message = str(err.value)
     assert "model-a" in message and "model-b" in message
-    assert "rag-demo ingest" in message
+    assert "rag-demo index" in message
 
 
 def test_loading_with_the_same_embedding_model_works(index, tmp_path):

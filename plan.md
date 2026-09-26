@@ -113,7 +113,7 @@ All settings live in `config.py` and can be overridden by CLI flags.
 - Write `manifest.json` recording: embedding model name, vector dimension, chunk strategy, chunk size, overlap, PDF file name, PDF SHA-256 hash, and build timestamp.
 - On load, refuse to use an index built with a different embedding model and explain why (mismatched embedding models are a classic silent RAG bug).
 
-**Done when:** `rag-demo ingest` runs Phases 2 to 5 end to end, and `rag-demo index-info` prints the manifest.
+**Done when:** `rag-demo index` runs Phases 2 to 5 end to end, and `rag-demo index-info` prints the manifest.
 
 ## Phase 6: Retrieval
 
@@ -187,7 +187,7 @@ What a vector database adds only matters at larger scale: approximate nearest-ne
 1. `rag-demo extract`: show raw text and page numbers.
 2. `rag-demo chunk --strategy fixed`: show chunks and overlap.
 3. `rag-demo embed`: show what a vector looks like.
-4. `rag-demo ingest` then `rag-demo index-info`: show the stored index.
+4. `rag-demo index` then `rag-demo index-info`: show the stored index.
 5. `rag-demo search "..."`: show ranked chunks and scores.
 6. `rag-demo ask "..." --show-prompt`: show the augmented prompt.
 7. `rag-demo ask "..." --compare`: RAG answer versus no-RAG answer.
